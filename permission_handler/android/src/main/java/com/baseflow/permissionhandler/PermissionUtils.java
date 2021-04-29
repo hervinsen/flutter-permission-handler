@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Environment;
 import android.util.Log;
 
 import androidx.annotation.RequiresApi;
@@ -61,6 +62,8 @@ public class PermissionUtils {
                 return PermissionConstants.PERMISSION_GROUP_ACCESS_MEDIA_LOCATION;
             case Manifest.permission.ACTIVITY_RECOGNITION:
                 return PermissionConstants.PERMISSION_GROUP_ACTIVITY_RECOGNITION;
+            case Manifest.permission.MANAGE_EXTERNAL_STORAGE:
+                return PermissionConstants.PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE;
             default:
                 return PermissionConstants.PERMISSION_GROUP_UNKNOWN;
         }
@@ -94,11 +97,14 @@ public class PermissionUtils {
                 break;
 
             case PermissionConstants.PERMISSION_GROUP_LOCATION_ALWAYS:
+                // Note that the LOCATION_ALWAYS will deliberately fallthrough to the LOCATION
+                // case on pre Android Q devices. The ACCESS_BACKGROUND_LOCATION permission was only
+                // introduced in Android Q, before it should be treated as the ACCESS_COARSE_LOCATION or
+                // ACCESS_FINE_LOCATION.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     if (hasPermissionInManifest(context, permissionNames, Manifest.permission.ACCESS_BACKGROUND_LOCATION))
                         permissionNames.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION);
                 }
-
             case PermissionConstants.PERMISSION_GROUP_LOCATION_WHEN_IN_USE:
             case PermissionConstants.PERMISSION_GROUP_LOCATION:
                 if (hasPermissionInManifest(context, permissionNames, Manifest.permission.ACCESS_COARSE_LOCATION))
@@ -175,8 +181,11 @@ public class PermissionUtils {
                 if (hasPermissionInManifest(context, permissionNames, Manifest.permission.READ_EXTERNAL_STORAGE))
                     permissionNames.add(Manifest.permission.READ_EXTERNAL_STORAGE);
 
-                if (hasPermissionInManifest(context, permissionNames, Manifest.permission.WRITE_EXTERNAL_STORAGE))
-                    permissionNames.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q && Environment.isExternalStorageLegacy())) {
+                    if (hasPermissionInManifest(context, permissionNames, Manifest.permission.WRITE_EXTERNAL_STORAGE))
+                        permissionNames.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
+                    break;
+                }
                 break;
 
             case PermissionConstants.PERMISSION_GROUP_IGNORE_BATTERY_OPTIMIZATIONS:
@@ -185,13 +194,35 @@ public class PermissionUtils {
                 break;
 
             case PermissionConstants.PERMISSION_GROUP_ACCESS_MEDIA_LOCATION:
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasPermissionInManifest(context, permissionNames, Manifest.permission.ACCESS_MEDIA_LOCATION))
+                // The ACCESS_MEDIA_LOCATION permission is introduced in Android Q, meaning we should
+                // not handle permissions on pre Android Q devices.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q)
+                    return null;
+
+                if(hasPermissionInManifest(context, permissionNames, Manifest.permission.ACCESS_MEDIA_LOCATION))
                     permissionNames.add(Manifest.permission.ACCESS_MEDIA_LOCATION);
                 break;
 
             case PermissionConstants.PERMISSION_GROUP_ACTIVITY_RECOGNITION:
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hasPermissionInManifest(context, permissionNames, Manifest.permission.ACTIVITY_RECOGNITION))
+                // The ACTIVITY_RECOGNITION permission is introduced in Android Q, meaning we should
+                // not handle permissions on pre Android Q devices.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q)
+                    return null;
+
+                if (hasPermissionInManifest(context, permissionNames, Manifest.permission.ACTIVITY_RECOGNITION))
                     permissionNames.add(Manifest.permission.ACTIVITY_RECOGNITION);
+                break;
+
+            case PermissionConstants.PERMISSION_GROUP_BLUETOOTH:
+                if (hasPermissionInManifest(context, permissionNames, Manifest.permission.BLUETOOTH))
+                    permissionNames.add(Manifest.permission.BLUETOOTH);
+                break;
+
+            case PermissionConstants.PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE:
+                // The MANAGE_EXTERNAL_STORAGE permission is introduced in Android R, meaning we should
+                // not handle permissions on pre Android R devices.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && hasPermissionInManifest(context, permissionNames, Manifest.permission.MANAGE_EXTERNAL_STORAGE ))
+                    permissionNames.add(Manifest.permission.MANAGE_EXTERNAL_STORAGE);
                 break;
 
             case PermissionConstants.PERMISSION_GROUP_NOTIFICATION:
@@ -262,10 +293,6 @@ public class PermissionUtils {
         if (names == null || names.isEmpty()) {
             return;
         }
-
-        for (String name : names) {
-            PermissionUtils.setRequestedPermission(activity, name);
-        }
     }
 
     @RequiresApi(api = Build.VERSION_CODES.M)
@@ -274,25 +301,27 @@ public class PermissionUtils {
             return false;
         }
 
-        return PermissionUtils.neverAskAgainSelected(activity, name);
+        final boolean shouldShowRequestPermissionRationale = ActivityCompat.shouldShowRequestPermissionRationale(activity, name);
+        return !shouldShowRequestPermissionRationale;
     }
 
-  @RequiresApi(api = Build.VERSION_CODES.M)
-  static boolean neverAskAgainSelected(final Activity activity, final String permission) {
-    final boolean hasRequestedPermissionBefore = getRequestedPermissionBefore(activity, permission);
-    final boolean shouldShowRequestPermissionRationale = ActivityCompat.shouldShowRequestPermissionRationale(activity, permission);
-    return hasRequestedPermissionBefore && !shouldShowRequestPermissionRationale;
-  }
 
-  static void setRequestedPermission(final Context context, final String permission) {
-    SharedPreferences genPrefs = context.getSharedPreferences("GENERIC_PREFERENCES", Context.MODE_PRIVATE);
-    SharedPreferences.Editor editor = genPrefs.edit();
-    editor.putBoolean(permission, true);
-    editor.apply();
-  }
+    @RequiresApi(api = Build.VERSION_CODES.M)
+    static boolean neverAskAgainSelected(final Activity activity, final String permission) {
+        final boolean hasRequestedPermissionBefore = getRequestedPermissionBefore(activity, permission);
+        final boolean shouldShowRequestPermissionRationale = ActivityCompat.shouldShowRequestPermissionRationale(activity, permission);
+        return hasRequestedPermissionBefore && !shouldShowRequestPermissionRationale;
+    }
 
-  static boolean getRequestedPermissionBefore(final Context context, final String permission) {
-    SharedPreferences genPrefs = context.getSharedPreferences("GENERIC_PREFERENCES", Context.MODE_PRIVATE);
-    return genPrefs.getBoolean(permission, false);
-  }
+    static void setRequestedPermission(final Context context, final String permission) {
+        SharedPreferences genPrefs = context.getSharedPreferences("GENERIC_PREFERENCES", Context.MODE_PRIVATE);
+        SharedPreferences.Editor editor = genPrefs.edit();
+        editor.putBoolean(permission, true);
+        editor.apply();
+    }
+
+    static boolean getRequestedPermissionBefore(final Context context, final String permission) {
+        SharedPreferences genPrefs = context.getSharedPreferences("GENERIC_PREFERENCES", Context.MODE_PRIVATE);
+        return genPrefs.getBoolean(permission, false);
+    }
 }

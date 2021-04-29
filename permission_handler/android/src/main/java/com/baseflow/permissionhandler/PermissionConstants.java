@@ -9,6 +9,7 @@ final class PermissionConstants {
     static final String LOG_TAG = "permissions_handler";
     static final int PERMISSION_CODE = 24;
     static final int PERMISSION_CODE_IGNORE_BATTERY_OPTIMIZATIONS = 5672353;
+    static final int PERMISSION_CODE_MANAGE_EXTERNAL_STORAGE = 210;
 
     //PERMISSION_GROUP
     static final int PERMISSION_GROUP_CALENDAR = 0;
@@ -32,6 +33,8 @@ final class PermissionConstants {
     static final int PERMISSION_GROUP_ACCESS_MEDIA_LOCATION = 18;
     static final int PERMISSION_GROUP_ACTIVITY_RECOGNITION = 19;
     static final int PERMISSION_GROUP_UNKNOWN = 20;
+    static final int PERMISSION_GROUP_BLUETOOTH = 21;
+    static final int PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE = 22;
 
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({
@@ -55,6 +58,8 @@ final class PermissionConstants {
             PERMISSION_GROUP_ACCESS_MEDIA_LOCATION,
             PERMISSION_GROUP_ACTIVITY_RECOGNITION,
             PERMISSION_GROUP_UNKNOWN,
+            PERMISSION_GROUP_BLUETOOTH,
+            PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE
     })
     @interface PermissionGroup {
     }

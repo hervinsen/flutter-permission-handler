@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
@@ -104,7 +105,20 @@ final class PermissionManager {
             // if we can't add as unknown and continue
             if (names == null || names.isEmpty()) {
                 if (!requestResults.containsKey(permission)) {
-                    requestResults.put(permission, PermissionConstants.PERMISSION_STATUS_NOT_DETERMINED);
+                    // On Android below M, the android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS flag in AndroidManifest.xml
+                    // may be ignored and not visible to the App as it's a new permission setting as a whole.
+                    if (permission == PermissionConstants.PERMISSION_GROUP_IGNORE_BATTERY_OPTIMIZATIONS && Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                        requestResults.put(permission, PermissionConstants.PERMISSION_STATUS_RESTRICTED);
+                    } else {
+                        requestResults.put(permission, PermissionConstants.PERMISSION_STATUS_DENIED);
+                    }
+                    // On Android below R, the android.permission.MANAGE_EXTERNAL_STORAGE flag in AndroidManifest.xml
+                    // may be ignored and not visible to the App as it's a new permission setting as a whole.
+                    if (permission == PermissionConstants.PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE && Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                        requestResults.put(permission, PermissionConstants.PERMISSION_STATUS_RESTRICTED);
+                    } else {
+                        requestResults.put(permission, PermissionConstants.PERMISSION_STATUS_DENIED);
+                    }
                 }
 
                 continue;
@@ -112,14 +126,21 @@ final class PermissionManager {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && permission == PermissionConstants.PERMISSION_GROUP_IGNORE_BATTERY_OPTIMIZATIONS) {
                 activityRegistry.addListener(
-                    new ActivityResultListener(successCallback)
+                        new ActivityResultListener(successCallback)
                 );
 
-                String packageName = activity.getPackageName();
-                Intent intent = new Intent();
-                intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                intent.setData(Uri.parse("package:" + packageName));
-                activity.startActivityForResult(intent, PermissionConstants.PERMISSION_CODE_IGNORE_BATTERY_OPTIMIZATIONS);
+                executeIntent(activity,
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        PermissionConstants.PERMISSION_CODE_IGNORE_BATTERY_OPTIMIZATIONS);
+
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && permission == PermissionConstants.PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE) {
+                activityRegistry.addListener(
+                        new ActivityResultListener(successCallback)
+                );
+
+                executeIntent(activity,
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        PermissionConstants.PERMISSION_CODE_MANAGE_EXTERNAL_STORAGE);
             } else {
                 permissionsToRequest.addAll(names);
             }
@@ -172,6 +193,23 @@ final class PermissionManager {
         //if no permissions were found then there is an issue and permission is not set in Android manifest
         if (names.size() == 0) {
             Log.d(PermissionConstants.LOG_TAG, "No permissions found in manifest for: " + permission);
+
+            // On Android below M, the android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS flag in AndroidManifest.xml
+            // may be ignored and not visible to the App as it's a new permission setting as a whole.
+            if (permission == PermissionConstants.PERMISSION_GROUP_IGNORE_BATTERY_OPTIMIZATIONS) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                    return PermissionConstants.PERMISSION_STATUS_RESTRICTED;
+                }
+            }
+
+            // On Android below R, the android.permission.MANAGE_EXTERNAL_STORAGE flag in AndroidManifest.xml
+            // may be ignored and not visible to the App as it's a new permission setting as a whole.
+            if (permission == PermissionConstants.PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE) {
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    return PermissionConstants.PERMISSION_STATUS_RESTRICTED;
+                }
+            }
+
             return PermissionConstants.PERMISSION_STATUS_NOT_DETERMINED;
         }
 
@@ -194,6 +232,16 @@ final class PermissionManager {
                         return PermissionConstants.PERMISSION_STATUS_RESTRICTED;
                     }
                 }
+                if (permission == PermissionConstants.PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE) {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                        return PermissionConstants.PERMISSION_STATUS_RESTRICTED;
+                    }
+
+                    return Environment.isExternalStorageManager()
+                            ? PermissionConstants.PERMISSION_STATUS_GRANTED
+                            : PermissionConstants.PERMISSION_STATUS_DENIED;
+                }
+
                 final int permissionStatus = ContextCompat.checkSelfPermission(context, name);
                 if (permissionStatus == PackageManager.PERMISSION_DENIED) {
                     if (!PermissionUtils.getRequestedPermissionBefore(context, name)) {
@@ -211,6 +259,14 @@ final class PermissionManager {
         }
 
         return PermissionConstants.PERMISSION_STATUS_GRANTED;
+    }
+
+    private void executeIntent(Activity activity, String action, int requestCode) {
+        String packageName = activity.getPackageName();
+        Intent intent = new Intent();
+        intent.setAction(action);
+        intent.setData(Uri.parse("package:" + packageName));
+        activity.startActivityForResult(intent, requestCode);
     }
 
     void shouldShowRequestPermissionRationale(
@@ -256,7 +312,7 @@ final class PermissionManager {
 
     @VisibleForTesting
     static final class ActivityResultListener
-        implements PluginRegistry.ActivityResultListener {
+            implements PluginRegistry.ActivityResultListener {
 
         // There's no way to unregister permission listeners in the v1 embedding, so we'll be called
         // duplicate times in cases where the user denies and then grants a permission. Keep track of if
@@ -273,17 +329,31 @@ final class PermissionManager {
 
         @Override
         public boolean onActivityResult(int requestCode, int resultCode, Intent data) {
-            if(alreadyCalled || requestCode != PermissionConstants.PERMISSION_CODE_IGNORE_BATTERY_OPTIMIZATIONS) {
+            if (alreadyCalled || (requestCode != PermissionConstants.PERMISSION_CODE_IGNORE_BATTERY_OPTIMIZATIONS && requestCode != PermissionConstants.PERMISSION_CODE_MANAGE_EXTERNAL_STORAGE)) {
                 return false;
             }
 
             alreadyCalled = true;
-            final int status = resultCode == Activity.RESULT_OK
+            int status = resultCode == Activity.RESULT_OK
                     ? PermissionConstants.PERMISSION_STATUS_GRANTED
                     : PermissionConstants.PERMISSION_STATUS_DENIED;
 
+
+            int permission;
+
+            if (requestCode == PermissionConstants.PERMISSION_CODE_IGNORE_BATTERY_OPTIMIZATIONS) {
+                permission = PermissionConstants.PERMISSION_GROUP_IGNORE_BATTERY_OPTIMIZATIONS;
+            } else if (requestCode == PermissionConstants.PERMISSION_CODE_MANAGE_EXTERNAL_STORAGE) {
+                status = Environment.isExternalStorageManager()
+                        ? PermissionConstants.PERMISSION_STATUS_GRANTED
+                        : PermissionConstants.PERMISSION_STATUS_DENIED;
+                permission = PermissionConstants.PERMISSION_GROUP_MANAGE_EXTERNAL_STORAGE;
+            } else {
+                return false;
+            }
+
             HashMap<Integer, Integer> results = new HashMap<>();
-            results.put(PermissionConstants.PERMISSION_GROUP_IGNORE_BATTERY_OPTIMIZATIONS, status);
+            results.put(permission, status);
             callback.onSuccess(results);
             return true;
         }
@@ -291,7 +361,7 @@ final class PermissionManager {
 
     @VisibleForTesting
     static final class RequestPermissionsListener
-        implements PluginRegistry.RequestPermissionsResultListener {
+            implements PluginRegistry.RequestPermissionsResultListener {
 
         // There's no way to unregister permission listeners in the v1 embedding, so we'll be called
         // duplicate times in cases where the user denies and then grants a permission. Keep track of if
@@ -314,8 +384,7 @@ final class PermissionManager {
         }
 
         @Override
-        public boolean onRequestPermissionsResult(int id, String[] permissions, int[] grantResults)
-        {
+        public boolean onRequestPermissionsResult(int id, String[] permissions, int[] grantResults) {
             if (alreadyCalled || id != PermissionConstants.PERMISSION_CODE) {
                 return false;
             }
